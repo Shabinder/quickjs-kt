@@ -2,6 +2,7 @@
 #include "jni_globals_generated.h"
 
 // Cached classes
+static jclass _cls_unit = NULL;
 static jclass _cls_ubyte_array = NULL;
 static jclass _cls_short = NULL;
 static jclass _cls_byte = NULL;
@@ -75,6 +76,7 @@ static jmethodID _method_quick_js_on_call_setter = NULL;
 static jmethodID _method_quick_js_on_call_function = NULL;
 static jmethodID _method_quick_js_set_eval_exception = NULL;
 static jmethodID _method_quick_js_set_unhandled_promise_rejection = NULL;
+static jmethodID _method_quick_js_clear_handled_promise_rejection = NULL;
 static jmethodID _method_memory_usage_init = NULL;
 static jmethodID _method_js_object_init = NULL;
 
@@ -88,10 +90,20 @@ static jfieldID _field_js_property_enumerable = NULL;
 static jfieldID _field_js_function_name = NULL;
 static jfieldID _field_js_function_is_async = NULL;
 
+jclass cls_unit(JNIEnv *env) {
+    if (_cls_unit == NULL) {
+        jclass cls = (*env)->FindClass(env, "java/lang/IllegalStateException");
+        (*env)->ThrowNew(env, cls, "Global class reference for 'kotlin/Unit' is not initialized. Ensure set_cls_unit is called.");
+        return NULL;
+    }
+    return _cls_unit;
+}
+
 jclass cls_ubyte_array(JNIEnv *env) {
     if (_cls_ubyte_array == NULL) {
-        jclass cls = (*env)->FindClass(env, "kotlin/UByteArray");
-        _cls_ubyte_array = (*env)->NewGlobalRef(env, cls);
+        jclass cls = (*env)->FindClass(env, "java/lang/IllegalStateException");
+        (*env)->ThrowNew(env, cls, "Global class reference for 'kotlin/UByteArray' is not initialized. Ensure set_cls_ubyte_array is called.");
+        return NULL;
     }
     return _cls_ubyte_array;
 }
@@ -310,6 +322,20 @@ jclass cls_js_object(JNIEnv *env) {
         _cls_js_object = (*env)->NewGlobalRef(env, cls);
     }
     return _cls_js_object;
+}
+
+void set_cls_unit(JNIEnv *env, jclass cls) {
+    if (_cls_unit != NULL) {
+        (*env)->DeleteGlobalRef(env, _cls_unit);
+    }
+    _cls_unit = (*env)->NewGlobalRef(env, cls);
+}
+
+void set_cls_ubyte_array(JNIEnv *env, jclass cls) {
+    if (_cls_ubyte_array != NULL) {
+        (*env)->DeleteGlobalRef(env, _cls_ubyte_array);
+    }
+    _cls_ubyte_array = (*env)->NewGlobalRef(env, cls);
 }
 
 jmethodID method_ubyte_array_init(JNIEnv *env) {
@@ -613,6 +639,13 @@ jmethodID method_quick_js_set_unhandled_promise_rejection(JNIEnv *env) {
     return _method_quick_js_set_unhandled_promise_rejection;
 }
 
+jmethodID method_quick_js_clear_handled_promise_rejection(JNIEnv *env) {
+    if (_method_quick_js_clear_handled_promise_rejection == NULL) {
+        _method_quick_js_clear_handled_promise_rejection = (*env)->GetMethodID(env, cls_quick_js(env), "clearHandledPromiseRejection", "()V");
+    }
+    return _method_quick_js_clear_handled_promise_rejection;
+}
+
 jmethodID method_memory_usage_init(JNIEnv *env) {
     if (_method_memory_usage_init == NULL) {
         _method_memory_usage_init = (*env)->GetMethodID(env, cls_memory_usage(env), "<init>", "(JJJJJJJJJJJJJJJJJJJJJJJJJJ)V");
@@ -684,6 +717,9 @@ jfieldID field_js_function_is_async(JNIEnv *env) {
 }
 
 void clear_jni_refs_cache(JNIEnv *env) {
+    if (_cls_unit != NULL) {
+        (*env)->DeleteGlobalRef(env, _cls_unit);
+    }
     if (_cls_ubyte_array != NULL) {
         (*env)->DeleteGlobalRef(env, _cls_ubyte_array);
     }
@@ -769,6 +805,7 @@ void clear_jni_refs_cache(JNIEnv *env) {
         (*env)->DeleteGlobalRef(env, _cls_js_object);
     }
 
+    _cls_unit = NULL;
     _cls_ubyte_array = NULL;
     _cls_short = NULL;
     _cls_byte = NULL;
@@ -841,6 +878,7 @@ void clear_jni_refs_cache(JNIEnv *env) {
     _method_quick_js_on_call_function = NULL;
     _method_quick_js_set_eval_exception = NULL;
     _method_quick_js_set_unhandled_promise_rejection = NULL;
+    _method_quick_js_clear_handled_promise_rejection = NULL;
     _method_memory_usage_init = NULL;
     _method_js_object_init = NULL;
 

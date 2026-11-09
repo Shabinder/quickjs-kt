@@ -1,24 +1,44 @@
+@file:OptIn(org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeCacheApi::class)
+
 import com.dokar.quickjs.disableUnsupportedPlatformTasks
+import org.jetbrains.kotlin.gradle.plugin.mpp.DisableCacheInKotlinVersion
 
 plugins {
-    id("application")
     alias(libs.plugins.kotlinMultiplatform)
-    id("com.github.johnrengelman.shadow") version "8.1.1"
 }
 
 kotlin {
     jvm {
-        withJava()
     }
 
     mingwX64 {
         binaries {
-            executable()
+            executable {
+                disableNativeCache(
+                    version = DisableCacheInKotlinVersion.`2_3_20`,
+                    reason = "Kotlin 2.3.20 native cache regression"
+                )
+            }
         }
     }
     linuxX64 {
         binaries {
-            executable()
+            executable {
+                disableNativeCache(
+                    version = DisableCacheInKotlinVersion.`2_3_20`,
+                    reason = "Kotlin 2.3.20 native cache regression"
+                )
+            }
+        }
+    }
+    macosArm64 {
+        binaries {
+            executable {
+                disableNativeCache(
+                    version = DisableCacheInKotlinVersion.`2_3_20`,
+                    reason = "Kotlin 2.3.20 native cache regression"
+                )
+            }
         }
     }
 
@@ -44,8 +64,8 @@ java {
     targetCompatibility = JavaVersion.VERSION_17
 }
 
-application {
-    mainClass.set("ReplMainKt")
-}
+// application {
+//     mainClass.set("ReplMainKt")
+// }
 
 disableUnsupportedPlatformTasks()

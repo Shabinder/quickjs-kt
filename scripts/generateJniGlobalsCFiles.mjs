@@ -10,9 +10,15 @@ const FILE_BASE_NAME = "jni_globals_generated";
 
 const JNI_REFS = [
   {
+    className: "kotlin/Unit",
+    methods: [],
+    requireSetter: true,
+  },
+  {
     className: "kotlin/UByteArray",
     methods: [{ name: "<init>", sign: "([B)V" }],
     fields: [{ name: "storage", type: "[B" }],
+    requireSetter: true,
   },
   {
     className: "java/lang/Short",
@@ -112,7 +118,7 @@ const JNI_REFS = [
     methods: [
       { name: "size", sign: "()I" },
       { name: "get", sign: "(I)Ljava/lang/Object;" },
-      { name: "add", sign: "(Ljava/lang/Object;)Z"}
+      { name: "add", sign: "(Ljava/lang/Object;)Z" }
     ],
   },
   {
@@ -183,6 +189,10 @@ const JNI_REFS = [
       {
         name: "setUnhandledPromiseRejection",
         sign: "(Ljava/lang/Object;)V",
+      },
+      {
+        name: "clearHandledPromiseRejection",
+        sign: "()V",
       },
     ],
   },
@@ -279,9 +289,13 @@ function srcFieldName(jniClassName, jniName) {
  */
 function generateHeader() {
   const classDefinitions = JNI_REFS.reduce((acc, item) => {
-    const { className } = item;
+    const { className, requireSetter } = item;
     const name = srcClassName(className);
-    return acc.concat([`jclass ${name}(JNIEnv *env);`]);
+    const defs = [`jclass ${name}(JNIEnv *env);`];
+    if (requireSetter === true) {
+      defs.push(`void set_${name}(JNIEnv *env, jclass cls);`);
+    }
+    return acc.concat(defs);
   }, []);
 
   const methodDefinitions = JNI_REFS.reduce((acc, item) => {
@@ -341,17 +355,31 @@ function generateSource() {
   }, []);
 
   const classBodies = JNI_REFS.reduce((acc, item) => {
-    const { className } = item;
+    const { className, requireSetter } = item;
     const name = srcClassName(className);
-    return acc.concat([
-      `jclass ${name}(JNIEnv *env) {
+
+    if (requireSetter === true) {
+      return acc.concat([
+        `jclass ${name}(JNIEnv *env) {
+    if (_${name} == NULL) {
+        jclass cls = (*env)->FindClass(env, "java/lang/IllegalStateException");
+        (*env)->ThrowNew(env, cls, "Global class reference for '${className}' is not initialized. Ensure set_${name} is called.");
+        return NULL;
+    }
+    return _${name};
+}`,
+      ]);
+    } else {
+      return acc.concat([
+        `jclass ${name}(JNIEnv *env) {
     if (_${name} == NULL) {
         jclass cls = (*env)->FindClass(env, "${className}");
         _${name} = (*env)->NewGlobalRef(env, cls);
     }
     return _${name};
 }`,
-    ]);
+      ]);
+    }
   }, []);
 
   const classClearStatements = JNI_REFS.reduce((acc, item) => {
@@ -395,6 +423,22 @@ function generateSource() {
 }`;
       })
     );
+  }, []);
+
+  const classSetters = JNI_REFS.reduce((acc, item) => {
+    const { className, requireSetter } = item;
+    if (requireSetter !== true) {
+      return acc;
+    }
+    const name = srcClassName(className);
+    return acc.concat([
+      `void set_${name}(JNIEnv *env, jclass cls) {
+    if (_${name} != NULL) {
+        (*env)->DeleteGlobalRef(env, _${name});
+    }
+    _${name} = (*env)->NewGlobalRef(env, cls);
+}`,
+    ]);
   }, []);
 
   const fieldDeclarations = JNI_REFS.reduce((acc, item) => {
@@ -444,6 +488,8 @@ ${fieldDeclarations.join("\n")}
 
 ${classBodies.join("\n\n")}
 
+${classSetters.join("\n\n")}
+
 ${methodBodies.join("\n\n")}
 
 ${fieldBodies.join("\n\n")}
@@ -452,16 +498,16 @@ void clear_jni_refs_cache(JNIEnv *env) {
 ${classClearStatements.map((item) => "    " + item).join("\n")}
 
 ${classDeclarations
-  .map((item) => item.replace("static jclass ", "    "))
-  .join("\n")}
+      .map((item) => item.replace("static jclass ", "    "))
+      .join("\n")}
 
 ${methodDeclarations
-  .map((item) => item.replace("static jmethodID ", "    "))
-  .join("\n")}
+      .map((item) => item.replace("static jmethodID ", "    "))
+      .join("\n")}
 
 ${fieldDeclarations
-  .map((item) => item.replace("static jfieldID ", "    "))
-  .join("\n")}
+      .map((item) => item.replace("static jfieldID ", "    "))
+      .join("\n")}
 }
 `;
 

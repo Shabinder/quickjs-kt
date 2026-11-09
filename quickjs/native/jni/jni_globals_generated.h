@@ -4,7 +4,13 @@
 
 #include <jni.h>
 
+jclass cls_unit(JNIEnv *env);
+
+void set_cls_unit(JNIEnv *env, jclass cls);
+
 jclass cls_ubyte_array(JNIEnv *env);
+
+void set_cls_ubyte_array(JNIEnv *env, jclass cls);
 
 jclass cls_short(JNIEnv *env);
 
@@ -145,6 +151,8 @@ jmethodID method_quick_js_on_call_function(JNIEnv *env);
 jmethodID method_quick_js_set_eval_exception(JNIEnv *env);
 
 jmethodID method_quick_js_set_unhandled_promise_rejection(JNIEnv *env);
+
+jmethodID method_quick_js_clear_handled_promise_rejection(JNIEnv *env);
 
 jmethodID method_memory_usage_init(JNIEnv *env);
 

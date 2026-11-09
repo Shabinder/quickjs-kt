@@ -42,7 +42,8 @@ Globals *globals_from_ptr(JNIEnv *env, jlong ptr) {
  */
 JNIEXPORT jlong JNICALL Java_com_dokar_quickjs_QuickJs_initGlobals(JNIEnv *env,
                                                                    jobject this,
-                                                                   jlong runtime_ptr) {
+                                                                   jlong runtime_ptr,
+                                                                   jobjectArray classes) {
     // Suppress lint: We will free it in releaseGlobals()
 #pragma clang diagnostic push
 #pragma ide diagnostic ignored "MemoryLeak"
@@ -53,11 +54,16 @@ JNIEXPORT jlong JNICALL Java_com_dokar_quickjs_QuickJs_initGlobals(JNIEnv *env,
     globals->defined_js_objects = NULL;
     globals->global_object_refs = NULL;
     globals->created_js_functions = NULL;
-    globals->evaluate_result_promise = NULL;
+    globals->evaluate_result_promise = JS_UNDEFINED;
 
     pthread_mutex_init(&globals->js_mutex, NULL);
 
     cache_java_vm(env);
+
+    jclass cls_unit = (*env)->GetObjectArrayElement(env, classes, 0);
+    set_cls_unit(env, cls_unit);
+    jclass cls_ubyte_array = (*env)->GetObjectArrayElement(env, classes, 1);
+    set_cls_ubyte_array(env, cls_ubyte_array);
 
     JSRuntime *runtime = runtime_from_ptr(env, runtime_ptr);
     jobject global_host_ref = (*env)->NewGlobalRef(env, this);
@@ -147,18 +153,19 @@ Java_com_dokar_quickjs_QuickJs_releaseGlobals(JNIEnv *env, jobject this, jlong c
         cvector_free(global_object_refs);
     }
 
-    if (globals->evaluate_result_promise != NULL) {
-        // Free the result promise even if someone hasn't used it
-        JS_FreeValue(context, *(globals->evaluate_result_promise));
-        globals->evaluate_result_promise = NULL;
-    }
+    // Free the result promise even if someone hasn't used it
+    JS_FreeValue(context, globals->evaluate_result_promise);
+
+    globals->evaluate_result_promise = JS_UNDEFINED;
 
     // Destroy js mutex
     pthread_mutex_destroy(&globals->js_mutex);
 
     // Clear Env, class, methodId, fieldId
     clear_java_vm_cache();
-    clear_jni_refs_cache(env);
+    if (get_qjs_instance_count() <= 0) {
+        clear_jni_refs_cache(env);
+    }
 
     // Free the globals struct
     free(globals);
@@ -375,15 +382,11 @@ jobject handle_eval_result(JNIEnv *env,
             return NULL;
         }
 
-        if (globals->evaluate_result_promise != NULL) {
-            // Free the unused result, if any
-            JS_FreeValue(context, *globals->evaluate_result_promise);
-        }
+        // Free the unused result, if any
+        JS_FreeValue(context, globals->evaluate_result_promise);
 
         // Save it to the globals
-        // Suppress the warning, we know that value will live long enough
-        globals->evaluate_result_promise = malloc(sizeof(JSValue));
-        *globals->evaluate_result_promise = value;
+        globals->evaluate_result_promise = value;
 
         // This result should not be used
         return NULL;
@@ -669,7 +672,7 @@ Java_com_dokar_quickjs_QuickJs_getEvaluateResult(JNIEnv *env,
     if (globals == NULL) {
         return NULL;
     }
-    if (globals->evaluate_result_promise == NULL) {
+    if (JS_IsUndefined(globals->evaluate_result_promise)) {
         jni_throw_qjs_exception(env, "Result promise not found. Have you evaluated a script?");
         return NULL;
     }
@@ -680,10 +683,10 @@ Java_com_dokar_quickjs_QuickJs_getEvaluateResult(JNIEnv *env,
 
     JS_UpdateStackTop(runtime);
 
-    JSValue result_promise = *globals->evaluate_result_promise;
+    JSValue result_promise = globals->evaluate_result_promise;
     if (!js_is_promise(context, result_promise)) {
         JS_FreeValue(context, result_promise);
-        globals->evaluate_result_promise = NULL;
+        globals->evaluate_result_promise = JS_UNDEFINED;
         jni_throw_qjs_exception(env, "Invalid result promise object.");
 
         pthread_mutex_unlock(&globals->js_mutex);
@@ -706,7 +709,8 @@ Java_com_dokar_quickjs_QuickJs_getEvaluateResult(JNIEnv *env,
         result = js_value_to_jobject(env, context, js_result);
 
         // Avoid resetting jni exception to null
-        if (!JS_IsNull(js_result)) {
+        int res_tag = JS_VALUE_GET_TAG(js_result);
+        if (res_tag != JS_TAG_NULL && res_tag != JS_TAG_UNINITIALIZED) {
             jthrowable error;
             if ((*env)->IsInstanceOf(env, result, cls_throwable(env))) {
                 error = (jthrowable) result;
@@ -728,7 +732,7 @@ Java_com_dokar_quickjs_QuickJs_getEvaluateResult(JNIEnv *env,
     }
     // Clear the promise
     JS_FreeValue(context, result_promise);
-    globals->evaluate_result_promise = NULL;
+    globals->evaluate_result_promise = JS_UNDEFINED;
 
     pthread_mutex_unlock(&globals->js_mutex);
 

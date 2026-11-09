@@ -59,7 +59,7 @@ suspend fun <T> QuickJs.evaluate(
 @Throws(QuickJsException::class)
 @Deprecated(
     message = "Use evaluate(ByteArray, KType) instead.",
-    replaceWith = ReplaceWith("evaluate<T>(bytecode, typeOf<T>()"),
+    replaceWith = ReplaceWith("evaluate<T>(bytecode, typeOf<T>())"),
 )
 suspend fun <T> QuickJs.evaluate(
     bytecode: ByteArray,
@@ -128,6 +128,7 @@ suspend fun <T> QuickJs.evaluate(
     }
 }
 
+@OptIn(ExperimentalUnsignedTypes::class)
 actual class QuickJs private constructor(
     private val jobDispatcher: CoroutineDispatcher,
 ) : Closeable {
@@ -196,7 +197,10 @@ actual class QuickJs private constructor(
         try {
             runtime = newRuntime()
             context = newContext(runtime)
-            globals = initGlobals(runtime)
+            globals = initGlobals(
+                runtime,
+                arrayOf(Unit::class.java, UByteArray::class.java)
+            )
         } catch (e: QuickJsException) {
             close()
             throw e
@@ -212,42 +216,48 @@ actual class QuickJs private constructor(
         binding: ObjectBinding,
         parent: JsObjectHandle,
     ): JsObjectHandle {
-        ensureNotClosed()
-        val nativeHandle = defineObject(
-            globals = globals,
-            context = context,
-            parent = parent.nativeHandle,
-            name = name,
-            properties = binding.properties.toTypedArray(),
-            functions = binding.functions.toTypedArray(),
-        )
-        if (nativeHandle < 0L) {
-            throw QuickJsException("Failed to define object '$name'.")
+        return jsMutex.withLockSync {
+            ensureNotClosed()
+            val nativeHandle = defineObject(
+                globals = globals,
+                context = context,
+                parent = parent.nativeHandle,
+                name = name,
+                properties = binding.properties.toTypedArray(),
+                functions = binding.functions.toTypedArray(),
+            )
+            if (nativeHandle < 0L) {
+                throw QuickJsException("Failed to define object '$name'.")
+            }
+            objectBindings[nativeHandle] = binding
+            JsObjectHandle(nativeHandle)
         }
-        objectBindings[nativeHandle] = binding
-        return JsObjectHandle(nativeHandle)
     }
 
     actual fun <R> defineBinding(name: String, binding: FunctionBinding<R>) {
-        ensureNotClosed()
-        globalFunctions[name] = binding
-        defineFunction(
-            globals = globals,
-            context = context,
-            name = name,
-            isAsync = false,
-        )
+        jsMutex.withLockSync {
+            ensureNotClosed()
+            defineFunction(
+                globals = globals,
+                context = context,
+                name = name,
+                isAsync = false,
+            )
+            globalFunctions[name] = binding
+        }
     }
 
     actual fun <R> defineBinding(name: String, binding: AsyncFunctionBinding<R>) {
-        ensureNotClosed()
-        globalFunctions[name] = binding
-        defineFunction(
-            globals = globals,
-            context = context,
-            name = name,
-            isAsync = true,
-        )
+        jsMutex.withLockSync {
+            ensureNotClosed()
+            defineFunction(
+                globals = globals,
+                context = context,
+                name = name,
+                isAsync = true,
+            )
+            globalFunctions[name] = binding
+        }
     }
 
     @Throws(QuickJsException::class)
@@ -317,7 +327,10 @@ actual class QuickJs private constructor(
         val result = jsResultMutex.withLock {
             jsMutex.withLock { evalBlock() }
             awaitAsyncJobs()
-            jsMutex.withLock { getEvaluateResult(context, globals) }
+            jsMutex.withLock {
+                if (isClosed) throw CancellationException("Already closed.")
+                getEvaluateResult(context, globals)
+            }
         }
         handleException()
         return result
@@ -329,31 +342,34 @@ actual class QuickJs private constructor(
     }
 
     actual override fun close() {
+        if (isClosed) return
         isClosed = true
         jobsMutex.withLockSync {
             asyncJobs.forEach { it.cancel() }
             asyncJobs.clear()
         }
-        jsMutex.withLockSync {}
-        objectBindings.clear()
-        globalFunctions.clear()
-        modules.clear()
-        if (globals != 0L) {
-            releaseGlobals(context, globals)
-            globals = 0
-        }
-        if (context != 0L) {
-            releaseContext(context)
-            context = 0
-        }
-        if (runtime != 0L) {
-            releaseRuntime(runtime)
-            runtime = 0
+        jsMutex.withLockSync {
+            objectBindings.clear()
+            globalFunctions.clear()
+            modules.clear()
+            if (globals != 0L) {
+                releaseGlobals(context, globals)
+                globals = 0
+            }
+            if (context != 0L) {
+                releaseContext(context)
+                context = 0
+            }
+            if (runtime != 0L) {
+                releaseRuntime(runtime)
+                runtime = 0
+            }
         }
     }
 
     private suspend fun awaitAsyncJobs() {
         jsMutex.withLock {
+            if (isClosed) return@withLock
             do {
                 // Execute JS Promises, putting this in while(true) is unnecessary
                 // since we have the same loop after every asyncFunction call
@@ -389,12 +405,13 @@ actual class QuickJs private constructor(
         args: Array<Any?>,
         block: suspend (bindingArgs: Array<Any?>) -> Any?,
     ) {
-        ensureNotClosed()
+        if (isClosed) return
         val (resolveHandle, rejectHandle) = promiseHandlesFromArgs(args)
         val job = coroutineScope.launch {
             try {
                 val result = block(args.sliceArray(2..<args.size))
                 jsMutex.withLock {
+                    if (isClosed) return@withLock
                     // Call resolve() on JNI side
                     invokeJsFunction(
                         context = context,
@@ -405,6 +422,7 @@ actual class QuickJs private constructor(
                 }
             } catch (e: Throwable) {
                 jsMutex.withLock {
+                    if (isClosed) return@withLock
                     // Call reject() on JNI side
                     invokeJsFunction(
                         context = context,
@@ -415,6 +433,7 @@ actual class QuickJs private constructor(
                 }
             }
             jsMutex.withLock {
+                if (isClosed) return@withLock
                 // The job is completed, see what we can do next:
                 // - Execute subsequent Promises
                 // - Cancel all jobs and fail, if rejected and JS didn't handle it
@@ -513,21 +532,33 @@ actual class QuickJs private constructor(
      * Called from JNI.
      */
     private fun setUnhandledPromiseRejection(reason: Any?) {
-        ensureNotClosed()
+        if (isClosed) return
         if (evalException == null) {
             evalException = reason as? Throwable ?: QuickJsException(reason.toString())
         }
         jobsMutex.withLockSync { asyncJobs.forEach { it.cancel() } }
     }
 
-    private fun ensureNotClosed() = check(runtime != 0L) { "Already closed." }
+    /**
+     * Called from JNI when a previously unhandled promise rejection is handled.
+     */
+    private fun clearHandledPromiseRejection() {
+        if (isClosed) return
+        this.evalException = null
+    }
+
+    private fun ensureNotClosed() {
+        if (isClosed || runtime == 0L || context == 0L || globals == 0L) {
+            qjsError("Already closed.")
+        }
+    }
 
     private external fun newRuntime(): Long
 
     @Throws(QuickJsException::class)
     private external fun newContext(runtime: Long): Long
 
-    private external fun initGlobals(runtime: Long): Long
+    private external fun initGlobals(runtime: Long, classes: Array<Class<*>>): Long
 
     @Throws(QuickJsException::class)
     private external fun releaseGlobals(context: Long, globals: Long)
@@ -612,7 +643,7 @@ actual class QuickJs private constructor(
 
     actual companion object {
         init {
-            loadNativeLibrary("quickjs")
+            NativeLibraryLoader.loadLibrary("quickjs")
         }
 
         @Throws(QuickJsException::class)

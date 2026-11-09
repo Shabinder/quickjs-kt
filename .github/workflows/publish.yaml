@@ -8,12 +8,12 @@ jobs:
     runs-on: macos-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
 
       - name: Setup JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           java-version: '17'
           distribution: 'adopt'
@@ -21,7 +21,7 @@ jobs:
 
       # Build system for C
       - name: Setup CMake
-        uses: jwlawson/actions-setup-cmake@v2.0
+        uses: jwlawson/actions-setup-cmake@v2.2
 
       # CMake generator
       - name: Setup ninja-build
@@ -30,6 +30,8 @@ jobs:
       # Cross-compile native libraries
       - name: Setup Zig
         uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: 0.12.0
 
       # Run js/ts scripts
       - name: Set Bun.js
@@ -38,12 +40,9 @@ jobs:
           bun-version: latest
 
       - name: Install multiplatform JDKs
-        run: |
-          bun scripts/setupMultiplatformJdks.ts
-          printf "Exports:\n$(cat ~/java-home-vars-github.sh)"
-          source ~/java-home-vars-github.sh
+        run: bun scripts/setupMultiplatformJdks.ts
 
-      - uses: gradle/actions/setup-gradle@v3
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: Grant execute permission for scripts
         run: |

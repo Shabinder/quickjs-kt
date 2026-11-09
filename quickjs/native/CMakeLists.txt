@@ -59,7 +59,7 @@ elseif (TARGET_PLATFORM STREQUAL "ios_x64")
 elseif (TARGET_PLATFORM STREQUAL "ios_aarch64")
     set(CMAKE_SYSTEM_NAME "iOS")
     set(CMAKE_OSX_ARCHITECTURES "arm64")
-elseif (TARGET_PLATFORM STREQUAL "ios_aarch64_simulator")
+elseif (TARGET_PLATFORM STREQUAL "ios_simulator_aarch64")
     set(CMAKE_SYSTEM_NAME "iOS")
     set(CMAKE_OSX_ARCHITECTURES "arm64")
 elseif (TARGET_PLATFORM STREQUAL "windows_x64")
@@ -78,6 +78,8 @@ elseif (TARGET_PLATFORM STREQUAL "windows_x64")
     endif ()
     # For QuickJS
     add_compile_definitions(CONFIG_WIN32)
+    # Add stack check implementation
+    list(APPEND all_sources "common/stack_chk.c")
 elseif (TARGET_PLATFORM STREQUAL "android")
     add_compile_definitions(CONFIG_ANDROID)
 endif ()
@@ -105,9 +107,9 @@ if (BUILD_WITH_JNI)
 endif ()
 
 # QuickJS sources
-file(GLOB_RECURSE quickjs_sources
+set(quickjs_sources
         "quickjs/cutils.c"
-        "quickjs/libbf.c"
+        "quickjs/dtoa.c"
         "quickjs/libregexp.c"
         "quickjs/libunicode.c"
         "quickjs/quickjs.c"
@@ -127,6 +129,7 @@ if (LIBRARY_TYPE STREQUAL "shared")
     add_library(quickjs SHARED ${all_sources})
     if (TARGET_PLATFORM STREQUAL "android")
         target_link_libraries(quickjs log)
+        target_link_options(quickjs PRIVATE -Wl,-z,max-page-size=16384)
     endif ()
 elseif (LIBRARY_TYPE STREQUAL "static")
     add_library(quickjs STATIC ${all_sources})
